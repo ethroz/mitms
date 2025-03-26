@@ -227,6 +227,8 @@ void parse_options(int argc, char *argv[]) {
       } else if (strcmp(argv[i], options[22][0]) == 0) {
         frob_norm = false;
       } else if (strcmp(argv[i], options[23][0]) == 0) {
+        early_stop = true;
+      } else if (strcmp(argv[i], options[24][0]) == 0) {
         if (i >= argc) {
           cout << "Specify an integer numerator\n";
           exit(1);
@@ -243,14 +245,14 @@ void parse_options(int argc, char *argv[]) {
           (*unit_search)(1, 1) = LaComplex(polar(1.0, PI * n / d));
           i += 2;
         }
-      } else if (strcmp(argv[i], options[24][0]) == 0) {
+      } else if (strcmp(argv[i], options[25][0]) == 0) {
         Circuit tmp = read_dotqc(cin);
         tmp.print();
         cout << "\n";
         Rmatrix U(dim, dim);
         tmp.to_Rmatrix(U);
         U.print();
-      } else if (strcmp(argv[i], options[25][0]) == 0) {
+      } else if (strcmp(argv[i], options[26][0]) == 0) {
         cout << "MITMS -- A tool for optimally decomposing unitaries over FT gate sets\n"
           << "Written by Matthew Amy\n"
           << "Run with mitms [options] <circuit-label>\n\n";

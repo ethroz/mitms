@@ -1,4 +1,3 @@
-
 /*--------------------------------------------------------------------
 MITMS - Meet-in-the-middle quantum circuit synthesis
 Copyright (C) 2013  Matthew Amy and The University of Waterloo,
@@ -27,7 +26,7 @@ Author: Matthew Amy
 
 #define LA_COMPLEX_SUPPORT
 #define PI M_PI
-#define NUM_OPTIONS 26
+#define NUM_OPTIONS 27
 
 #include <iostream>
 #include <fstream>
@@ -127,6 +126,7 @@ namespace config {
   extern int    ancilla; // Number of ancilla qubits to use
   extern bool   paulis; // Whether to include the paulis in the instruction set
   extern bool   frob_norm; // Whether to use the frobenius norm
+  extern bool   early_stop; // Whether to stop searching after finding first result
 
   /* Configuration tools */
   void output_config(ofstream & out);

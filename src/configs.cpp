@@ -1,4 +1,3 @@
-
 /*--------------------------------------------------------------------
 MITMS - Meet-in-the-middle quantum circuit synthesis
 Copyright (C) 2013  Matthew Amy and The University of Waterloo,
@@ -89,6 +88,7 @@ namespace config {
     {"-paulis", "           Include the Pauli group in the instruction set"},
     {"-memtest", "          Run a memory test"},
     {"-frobenius", "        Turn off frobenius norm"},
+    {"-early-stop", "       Stop searching after finding first result"},
     {"-rotation", " n d     Approximate a rotation matrix diag(1, e^i(PI * n / d))"},
     {"-matrix", "           Compute the matrix correspond to a .qc circuit file (read from stdin)"},
     {"-help", ""}
@@ -116,6 +116,7 @@ namespace config {
   int    ancilla        = 0;
   bool   paulis         = false;
 	bool   frob_norm      = true;
+  bool   early_stop     = false;
 
   void output_config(ofstream & out) {
     out << key_dimension;

@@ -1,4 +1,3 @@
-
 /*--------------------------------------------------------------------
 MITMS - Meet-in-the-middle quantum circuit synthesis
 Copyright (C) 2013  Matthew Amy and The University of Waterloo,
@@ -230,12 +229,25 @@ void exact_search(Rmatrix & U) {
 				pthread_mutex_unlock(&data_lock);
 				pthread_mutex_lock(&data_lock);
 			}
-			for (ti = res_list->begin(); ti != res_list->end(); ++ti) {
-				(ti->second).print();
-				cout << "Cost " << ti->first << "\n\n" << flush;
-				delete_circuit(ti->second);
+			// Check if we found a result and stop if early_stop is enabled
+			if (!res_list->empty()) {
+				// Print the results before stopping
+				for (ti = res_list->begin(); ti != res_list->end(); ++ti) {
+					(ti->second).print();
+					cout << "Cost " << ti->first << "\n\n" << flush;
+					delete_circuit(ti->second);
+				}
+			  res_list->clear();
+
+        if (config::early_stop) {
+          // Clean up before returning
+          delete [] circ_table;
+          if (left_table != NULL) delete [] left_table;
+          delete base_list;
+          delete [] thrds;
+          return;
+        }
 			}
-      res_list->clear();
       
 			clock_gettime(CLOCK_MONOTONIC, &end);
 			cout << fixed << setprecision(3);
