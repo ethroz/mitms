@@ -234,9 +234,9 @@ void exact_search(Rmatrix & U) {
 				(ti->second).print();
 				cout << "Cost " << ti->first << "\n\n" << flush;
 				delete_circuit(ti->second);
-				res_list->erase(ti);
 			}
-
+      res_list->clear();
+      
 			clock_gettime(CLOCK_MONOTONIC, &end);
 			cout << fixed << setprecision(3);
 			cout << "Time: " << (end.tv_sec + (double)end.tv_nsec/1000000000) - (start.tv_sec + (double)start.tv_nsec/1000000000) << " s\n";
