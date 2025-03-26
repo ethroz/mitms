@@ -36,10 +36,3 @@ target_link_libraries(mitms
     rt
     pthread
 )
-
-# Copy searches file to build directory
-add_custom_command(TARGET mitms POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E copy
-        ${CMAKE_SOURCE_DIR}/searches
-        ${CMAKE_BINARY_DIR}/searches
-) 
