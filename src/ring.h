@@ -1,4 +1,3 @@
-
 /*--------------------------------------------------------------------
 MITMS - Meet-in-the-middle quantum circuit synthesis
 Copyright (C) 2013  Matthew Amy and The University of Waterloo,
@@ -53,6 +52,7 @@ class Elt {
     void reduce();
     inline Elt & operator=  (const Elt & R) {
       a = R.a; b = R.b; c = R.c; d = R.d; n = R.n;
+      return *this;
     }
     Elt & operator+= (const Elt & R);
     Elt & operator-= (const Elt & R);
