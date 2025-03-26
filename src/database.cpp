@@ -1,4 +1,3 @@
-
 /*--------------------------------------------------------------------
 MITMS - Meet-in-the-middle quantum circuit synthesis
 Copyright (C) 2013  Matthew Amy and The University of Waterloo,
@@ -427,49 +426,101 @@ circuit_list * generate_base_circuits() {
   return ret; 
 }
 
-// Generate regular sequences
-void generate_sequences(int i, circuit_list * L, map_t * circ_table) {
+// Structure to pass arguments to worker threads
+struct worker_args {
+  map_iter start;
+  map_iter end;
+  circuit_list* L;
+  map_t* circ_table;
+  int i;
+  int* progress;
+  int* p;
+  int total;
+  pthread_mutex_t* progress_mutex;
+};
+
+// Thread worker function for parallel sequence generation
+void* sequence_worker(void* arg) {
+  struct worker_args* args = (struct worker_args*)arg;
   bool flg;
   Circuit tmp_circ;
-  map_iter it;
   circuit_iter c;
   Rmatrix V(dim, dim), W(dim, dim);
-  int num = 0, p = 0;
-
-	cout << "|";
-
-  /* For each circuit of length i ending in gate G */
-  for (it = circ_table[i-1].begin(); it != circ_table[i-1].end(); it++) {
+  
+  for (map_iter it = args->start; it != args->end; it++) {
     if (!(it->second.empty())) (it->second).to_Rmatrix(V);
     else V = eye(dim, dim);
-    /* Generate all the sequences of length i */
-    for (c = L->begin(); c != L->end(); c++) {
+    
+    for (c = args->L->begin(); c != args->L->end(); c++) {
       flg = false;
-      /*--------------------- Additional pruning
-      if (count_cnot(tmp_circ) > 4 || count_t(tmp_circ) > 4) flg = true;
-      
-       if (it->second != NULL) {
-       flg = nontrivial_id((*c)->last(), (it->second)->G);
-       }
-         
-        ---------------------------------------- */
       tmp_circ = (*c).append(it->second);
       if (!flg) {
         (*c).to_Rmatrix(W);
-        insert_tree(W*V, tmp_circ, circ_table, i, config::mod_perms, config::mod_invs);
+        insert_tree(W*V, tmp_circ, args->circ_table, args->i, config::mod_perms, config::mod_invs);
         if (config::mod_invs && !(it->second.empty())) {
           tmp_circ = (it->second).append(*c);
-          insert_tree(V*W, tmp_circ, circ_table, i, config::mod_perms, config::mod_invs);
+          insert_tree(V*W, tmp_circ, args->circ_table, args->i, config::mod_perms, config::mod_invs);
         }
       }
     }
-		num++;
-		if (num*37 / circ_table[i-1].size() >= p) {
-			cout << "=" << flush;
-			p++;
-		}
+    
+    pthread_mutex_lock(args->progress_mutex);
+    (*args->progress)++;
+    if ((*args->progress) * 37 / args->total >= *args->p) {
+      cout << "=" << flush;
+      (*args->p)++;
+    }
+    pthread_mutex_unlock(args->progress_mutex);
   }
-	cout << "|\n";
+  
+  return NULL;
+}
+
+void generate_sequences(int i, circuit_list * L, map_t * circ_table) {
+  int num_threads = config::num_threads;
+  pthread_t* threads = new pthread_t[num_threads];
+  worker_args* args = new worker_args[num_threads];
+  pthread_mutex_t progress_mutex;
+  pthread_mutex_init(&progress_mutex, NULL);
+  
+  int progress = 0;
+  int p = 0;
+  int total = circ_table[i-1].size();
+  
+  cout << "|";
+  
+  // Calculate chunk size for each thread
+  int chunk_size = total / num_threads;
+  if (chunk_size == 0) chunk_size = 1;
+  
+  // Create threads
+  map_iter current = circ_table[i-1].begin();
+  for (int t = 0; t < num_threads; t++) {
+    args[t].start = current;
+    args[t].end = (t == num_threads - 1) ? circ_table[i-1].end() : std::next(current, chunk_size);
+    args[t].L = L;
+    args[t].circ_table = circ_table;
+    args[t].i = i;
+    args[t].progress = &progress;
+    args[t].p = &p;
+    args[t].total = total;
+    args[t].progress_mutex = &progress_mutex;
+    
+    pthread_create(&threads[t], NULL, sequence_worker, &args[t]);
+    current = args[t].end;
+  }
+  
+  // Wait for all threads to complete
+  for (int t = 0; t < num_threads; t++) {
+    pthread_join(threads[t], NULL);
+  }
+  
+  cout << "|\n";
+  
+  // Cleanup
+  delete[] threads;
+  delete[] args;
+  pthread_mutex_destroy(&progress_mutex);
 }
 
 // Generate a database of unitaries projected onto the ancilla |0> output state
