@@ -1,3 +1,4 @@
+
 /*--------------------------------------------------------------------
 MITMS - Meet-in-the-middle quantum circuit synthesis
 Copyright (C) 2013  Matthew Amy and The University of Waterloo,
@@ -67,7 +68,6 @@ Elt & Elt::operator+= (const Elt & R) {
   b = x*b + R.b*y;
   c = x*c + R.c*y;
   d = x*d + R.d*y;
-  return *this;
 }
 Elt & Elt::operator-= (const Elt & R) {
   int x = 1 << R.n;
@@ -77,7 +77,6 @@ Elt & Elt::operator-= (const Elt & R) {
   b = x*b - y*R.b;
   c = x*c - y*R.c;
   d = x*d - y*R.d;
-  return *this;
 }
 Elt & Elt::operator*= (const Elt & R) {
   if (config::hash_ring) {
@@ -102,7 +101,6 @@ Elt & Elt::operator*= (const Elt & R) {
     d = ax*R.d + bx*R.c + cx*R.b + dx*R.a;
     n += R.n;
   }
-  return *this;
 }
 
 void Elt::print() const {

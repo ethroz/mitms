@@ -795,9 +795,11 @@ void approx_search(Unitary & U) { approx_search_gen<Unitary>(U); }
 
 void mem_test(int n) {
   map_t * circ_table = new map_t[config::max_seq];
-  map_t * left_table = (config::ancilla == 0) ? NULL : new map_t[config::max_seq];
   circuit_list * base_list;
   base_list = generate_base_circuits();
-  load_sequences(n, base_list, circ_table, NULL);
-  getchar();
+  for (int i = 0; i <= n; i++) {
+    load_sequences(i, base_list, circ_table, NULL);
+  }
+  delete [] circ_table;
+  delete base_list;
 }
