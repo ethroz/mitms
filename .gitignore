@@ -1,4 +1,6 @@
 # Compiled source #
 ###################
+*.o
+mitms
 build/
 .vscode/
