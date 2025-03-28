@@ -35,7 +35,7 @@ pthread_cond_t cliff_ready;
 pthread_cond_t cliff_thrd_ready;
 pthread_mutex_t cliff_lock;
 pthread_mutex_t cliff_map_lock;
-pthread_rwlock_t circ_table_rwlock;  // Replaced mutex with rwlock for circ_table synchronization
+pthread_mutex_t circ_table_lock;  // New mutex for circ_table synchronization
 
 map_t            * cliff_map = NULL;
 Circuit            cliff_circ;
@@ -142,57 +142,56 @@ void input_map(ifstream & in, map_t * map, int depth) {
 
 /* Insert a circuit in a forest of trees, up to a specific depth */
 void insert_tree(const Rmatrix & V, Circuit & circ, map_t * tree_list, int depth, bool perms, bool inv) {
-  bool usedDirect = false;
+  Canon * canon_form;
+  struct triple * trip;
+  bool flg = false, del = false;
+  int i;
   Circuit ins_circ;
+  result res;
 
   /* Compute the canonical form */
-  Canon * canon_form = canonicalize(V, config::mod_phase, perms, inv);
+  canon_form = canonicalize(V, config::mod_phase, perms, inv);
 
   // Check to see if it's already synthesized
   // We only need to check the canonical form to get all permutations, inversions and phases
   // Also, we store all canonical forms so that when we search, we only have to look at one canonical form
   while (!canon_form->empty()) {
-    auto trip = &(canon_form->front());
-    
-    // --- Begin optimized lookup ---
-    bool found = false;
-    int i_val = 0;
-    result candidate_res;
-    pthread_rwlock_rdlock(&circ_table_rwlock);
-    for (int i = 1; i <= depth && !found; i++) {
-      candidate_res = find_unitary(trip->key, trip->mat, tree_list[i]);
-      if (candidate_res.first) {
-        found = true;
-        i_val = i;
+    trip = &(canon_form->front());
+    // Search in each tree up to depth
+    flg = false;
+    for (i = 1; i <= depth && !flg; i++) {
+      res = find_unitary(trip->key, trip->mat, tree_list[i]);
+      flg = flg || res.first;
+    }
+    // If none of the searches turned up anything...
+    // Our iterator should refer to the depth i tree
+    if (!flg || ((i > depth) && (circ.cost() < res.second.cost()))) {
+      pthread_mutex_lock(&circ_table_lock);  // Lock before modifying tree_list
+      if (flg) {
+        tree_list[i-1].erase(res.third);
       }
-    }
-    if (found) {
-      // A match was found; do not insert new candidate
-      canon_form->clear();
-      pthread_rwlock_unlock(&circ_table_rwlock);
-      break;
-    }
-    pthread_rwlock_unlock(&circ_table_rwlock);
-    // --- End optimized lookup ---
+      if (trip->permutation == 0 && trip->adjoint == false) {
+        ins_circ = circ; 
+        del = true;
+      } else {
+        ins_circ = circ.transform(trip->permutation, trip->adjoint);
+      }
 
-    // Perform the potentially expensive cost and transformation outside the lock
-    if (trip->permutation == 0 && trip->adjoint == false) {
-      ins_circ = circ;
-      usedDirect = true;
+      if (flg) {
+        tree_list[depth].insert(map_elt(trip->key, ins_circ));
+      } else {
+        tree_list[depth].insert(res.third, map_elt(trip->key, ins_circ));
+      }
+      pthread_mutex_unlock(&circ_table_lock);  // Unlock after modifying tree_list
+
+      canon_form->pop_front();
     } else {
-      ins_circ = circ.transform(trip->permutation, trip->adjoint);
+      canon_form->clear();
     }
-
-    // Re-lock to update the shared tree_list and canonical form
-    pthread_rwlock_wrlock(&circ_table_rwlock);
-    // Since no match was found, we insert using the candidate_res from last lookup
-    tree_list[depth].insert(candidate_res.third, map_elt(trip->key, ins_circ));
-    canon_form->pop_front();
-    pthread_rwlock_unlock(&circ_table_rwlock);
   }
   delete canon_form;
 
-  if (!usedDirect) delete_circuit(circ);
+  if (!del) delete_circuit(circ);
 }
 
 /* Threaded version -- for generating cliffords */
@@ -439,14 +438,16 @@ struct worker_args {
 // Thread worker function for parallel sequence generation
 void* sequence_worker(void* arg) {
   struct worker_args* args = (struct worker_args*)arg;
+  Circuit tmp_circ;
+  circuit_iter c;
   Rmatrix V(dim, dim), W(dim, dim);
   
   for (map_iter it = args->start; it != args->end; it++) {
     if (!(it->second.empty())) (it->second).to_Rmatrix(V);
     else V = eye(dim, dim);
     
-    for (auto c = args->L->begin(); c != args->L->end(); c++) {
-      Circuit tmp_circ = (*c).append(it->second);
+    for (c = args->L->begin(); c != args->L->end(); c++) {
+      tmp_circ = (*c).append(it->second);
       c->to_Rmatrix(W);
       insert_tree(W*V, tmp_circ, args->circ_table, args->depth, config::mod_perms, config::mod_invs);
       if (config::mod_invs && !(it->second.empty())) {
@@ -471,7 +472,7 @@ void generate_sequences(int depth, circuit_list * L, map_t * circ_table) {
   int total = circ_table[depth-1].size();
   
   // Initialize the circ_table mutex
-  pthread_rwlock_init(&circ_table_rwlock, NULL);
+  pthread_mutex_init(&circ_table_lock, NULL);
   
   cout << "|";
   
@@ -512,7 +513,7 @@ void generate_sequences(int depth, circuit_list * L, map_t * circ_table) {
   // Cleanup
   delete[] threads;
   delete[] args;
-  pthread_rwlock_destroy(&circ_table_rwlock);
+  pthread_mutex_destroy(&circ_table_lock);
 }
 
 // Generate a database of unitaries projected onto the ancilla |0> output state
