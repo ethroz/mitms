@@ -229,6 +229,11 @@ void exact_search(Rmatrix & U) {
 				pthread_mutex_unlock(&data_lock);
 				pthread_mutex_lock(&data_lock);
 			}
+      
+			clock_gettime(CLOCK_MONOTONIC, &end);
+			cout << fixed << setprecision(3);
+			cout << "Time: " << (end.tv_sec + (double)end.tv_nsec/1000000000) - (start.tv_sec + (double)start.tv_nsec/1000000000) << " s\n";
+      
 			// Check if we found a result and stop if early_stop is enabled
 			if (!res_list->empty()) {
 				// Print the results before stopping
@@ -249,9 +254,6 @@ void exact_search(Rmatrix & U) {
         }
 			}
       
-			clock_gettime(CLOCK_MONOTONIC, &end);
-			cout << fixed << setprecision(3);
-			cout << "Time: " << (end.tv_sec + (double)end.tv_nsec/1000000000) - (start.tv_sec + (double)start.tv_nsec/1000000000) << " s\n";
 			cout << "----------------------------------------\n" << flush;
     }
   }
