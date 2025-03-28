@@ -23,6 +23,9 @@ Author: Matthew Amy
 #include <string>
 #include <pthread.h>
 #include <iomanip>
+#include <atomic>
+#include <thread>
+#include <chrono>
 
 unsigned int numcorrect = 0, numcollision = 0, numsearch = 0;
 circuit_list * cliff_list;
@@ -32,6 +35,7 @@ pthread_cond_t cliff_ready;
 pthread_cond_t cliff_thrd_ready;
 pthread_mutex_t cliff_lock;
 pthread_mutex_t cliff_map_lock;
+pthread_mutex_t circ_table_lock;  // New mutex for circ_table synchronization
 
 map_t            * cliff_map = NULL;
 Circuit            cliff_circ;
@@ -162,6 +166,7 @@ void insert_tree(const Rmatrix & V, Circuit & circ, map_t * tree_list, int depth
     // If none of the searches turned up anything...
     // Our iterator should refer to the depth i tree
     if (!flg || ((i > depth) && (circ.cost() < res.second.cost()))) {
+      pthread_mutex_lock(&circ_table_lock);  // Lock before modifying tree_list
       if (flg) {
         tree_list[i-1].erase(res.third);
       }
@@ -177,22 +182,16 @@ void insert_tree(const Rmatrix & V, Circuit & circ, map_t * tree_list, int depth
       } else {
         tree_list[depth].insert(res.third, map_elt(trip->key, ins_circ));
       }
+      pthread_mutex_unlock(&circ_table_lock);  // Unlock after modifying tree_list
 
       canon_form->pop_front();
     } else {
-
       canon_form->clear();
     }
   }
   delete canon_form;
 
   if (!del) delete_circuit(circ);
-}
-
-inline void insert_tree(Circuit & circ, map_t * tree_list, int depth, bool perms, bool inv) {
-  Rmatrix V(dim, dim);
-  circ.to_Rmatrix(V);
-  insert_tree(V, circ, tree_list, depth, perms, inv);
 }
 
 /* Threaded version -- for generating cliffords */
@@ -432,17 +431,13 @@ struct worker_args {
   map_iter end;
   circuit_list* L;
   map_t* circ_table;
-  int i;
-  int* progress;
-  int* p;
-  int total;
-  pthread_mutex_t* progress_mutex;
+  int depth;
+  std::atomic<int>* progress;
 };
 
 // Thread worker function for parallel sequence generation
 void* sequence_worker(void* arg) {
   struct worker_args* args = (struct worker_args*)arg;
-  bool flg;
   Circuit tmp_circ;
   circuit_iter c;
   Rmatrix V(dim, dim), W(dim, dim);
@@ -452,40 +447,32 @@ void* sequence_worker(void* arg) {
     else V = eye(dim, dim);
     
     for (c = args->L->begin(); c != args->L->end(); c++) {
-      flg = false;
       tmp_circ = (*c).append(it->second);
-      if (!flg) {
-        (*c).to_Rmatrix(W);
-        insert_tree(W*V, tmp_circ, args->circ_table, args->i, config::mod_perms, config::mod_invs);
-        if (config::mod_invs && !(it->second.empty())) {
-          tmp_circ = (it->second).append(*c);
-          insert_tree(V*W, tmp_circ, args->circ_table, args->i, config::mod_perms, config::mod_invs);
-        }
+      c->to_Rmatrix(W);
+      insert_tree(W*V, tmp_circ, args->circ_table, args->depth, config::mod_perms, config::mod_invs);
+      if (config::mod_invs && !(it->second.empty())) {
+        tmp_circ = (it->second).append(*c);
+        insert_tree(V*W, tmp_circ, args->circ_table, args->depth, config::mod_perms, config::mod_invs);
       }
     }
     
-    pthread_mutex_lock(args->progress_mutex);
     (*args->progress)++;
-    if ((*args->progress) * 37 / args->total >= *args->p) {
-      cout << "=" << flush;
-      (*args->p)++;
-    }
-    pthread_mutex_unlock(args->progress_mutex);
   }
   
   return NULL;
 }
 
-void generate_sequences(int i, circuit_list * L, map_t * circ_table) {
+void generate_sequences(int depth, circuit_list * L, map_t * circ_table) {
   int num_threads = config::num_threads;
   pthread_t* threads = new pthread_t[num_threads];
   worker_args* args = new worker_args[num_threads];
-  pthread_mutex_t progress_mutex;
-  pthread_mutex_init(&progress_mutex, NULL);
   
-  int progress = 0;
+  std::atomic<int> progress(0);
   int p = 0;
-  int total = circ_table[i-1].size();
+  int total = circ_table[depth-1].size();
+  
+  // Initialize the circ_table mutex
+  pthread_mutex_init(&circ_table_lock, NULL);
   
   cout << "|";
   
@@ -494,25 +481,31 @@ void generate_sequences(int i, circuit_list * L, map_t * circ_table) {
   if (chunk_size == 0) chunk_size = 1;
   
   // Create threads
-  map_iter current = circ_table[i-1].begin();
-  for (int t = 0; t < num_threads; t++) {
-    args[t].start = current;
-    args[t].end = (t == num_threads - 1) ? circ_table[i-1].end() : std::next(current, chunk_size);
-    args[t].L = L;
-    args[t].circ_table = circ_table;
-    args[t].i = i;
-    args[t].progress = &progress;
-    args[t].p = &p;
-    args[t].total = total;
-    args[t].progress_mutex = &progress_mutex;
+  map_iter current = circ_table[depth-1].begin();
+  for (int i = 0; i < num_threads; i++) {
+    args[i].start = current;
+    args[i].end = (i == num_threads - 1) ? circ_table[depth-1].end() : std::next(current, chunk_size);
+    args[i].L = L;
+    args[i].circ_table = circ_table;
+    args[i].depth = depth;
+    args[i].progress = &progress;
     
-    pthread_create(&threads[t], NULL, sequence_worker, &args[t]);
-    current = args[t].end;
+    pthread_create(&threads[i], NULL, sequence_worker, &args[i]);
+    current = args[i].end;
+  }
+  
+  // Monitor progress in main thread
+  while (progress < total) {
+    if (progress * 37 / total >= p) {
+      cout << "=" << flush;
+      p++;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
   }
   
   // Wait for all threads to complete
-  for (int t = 0; t < num_threads; t++) {
-    pthread_join(threads[t], NULL);
+  for (int i = 0; i < num_threads; i++) {
+    pthread_join(threads[i], NULL);
   }
   
   cout << "|\n";
@@ -520,7 +513,7 @@ void generate_sequences(int i, circuit_list * L, map_t * circ_table) {
   // Cleanup
   delete[] threads;
   delete[] args;
-  pthread_mutex_destroy(&progress_mutex);
+  pthread_mutex_destroy(&circ_table_lock);
 }
 
 // Generate a database of unitaries projected onto the ancilla |0> output state
@@ -551,61 +544,61 @@ void generate_proj(int depth, map_t * mp, map_t * left_table) {
 
 /* ---------------------------------- Load databases -- either read them in or generate them */
 // Load sequences
-void load_sequences(int i, circuit_list * L, map_t * circ_table, map_t * unproj) {
+void load_sequences(int depth, circuit_list * L, map_t * circ_table, map_t * unproj) {
   struct timespec start, end;
   string s;
 
-  if (i == 0 && unproj == NULL) {
+  if (depth == 0 && unproj == NULL) {
     Circuit gt(1);
     Rmatrix V(dim, dim);
 
     gt.to_Rmatrix(V);
-    circ_table[i].insert(map_elt(Hash_Rmatrix(V), Circuit()));
+    circ_table[depth].insert(map_elt(Hash_Rmatrix(V), Circuit()));
     return;
   }
 
   cout << "----------------------------------------\n";
-  cout << "Generating sequences of length " << i << "\n" << flush;
+  cout << "Generating sequences of length " << depth << "\n" << flush;
   clock_gettime(CLOCK_MONOTONIC, &start);
 
   if (config::serialize) {
     if (unproj == NULL) {
-      s = gen_filename(num_qubits, num_qubits, i);
+      s = gen_filename(num_qubits, num_qubits, depth);
     } else {
-      s = gen_filename(num_qubits, num_qubits_proj, i);
+      s = gen_filename(num_qubits, num_qubits_proj, depth);
     }
     ifstream in;
     in.open(s.c_str(), ifstream::binary);
     if (in.peek() != std::ifstream::traits_type::eof()) {
-      input_map(in, circ_table, i);
+      input_map(in, circ_table, depth);
     } else {
       ofstream out;
       out.open(s.c_str(), ofstream::binary);
 
       if (unproj == NULL) {
-        generate_sequences(i, L, circ_table);
+        generate_sequences(depth, L, circ_table);
       } else {
-				load_sequences(i, L, unproj, NULL);
-        generate_proj(i, unproj + i, circ_table);
+				load_sequences(depth, L, unproj, NULL);
+        generate_proj(depth, unproj + depth, circ_table);
       }
 
-      output_map(out, circ_table, i);
+      output_map(out, circ_table, depth);
       out.close();
     }
     in.close();
   } else {
     if (unproj == NULL) {
-      generate_sequences(i, L, circ_table);
+      generate_sequences(depth, L, circ_table);
     } else {
-      generate_sequences(i, L, unproj);
-      generate_proj(i, unproj + i, circ_table);
+      generate_sequences(depth, L, unproj);
+      generate_proj(depth, unproj + depth, circ_table);
     }
   }
 
   clock_gettime(CLOCK_MONOTONIC, &end);
   cout << fixed << setprecision(3);
   cout << "Time: " << (end.tv_sec + (double)end.tv_nsec/1000000000) - (start.tv_sec + (double)start.tv_nsec/1000000000) << " s\n";
-  cout << "# new unitaries: " << circ_table[i].size() << "\n";
+  cout << "# new unitaries: " << circ_table[depth].size() << "\n";
   cout << "# searches so far: " << numsearch << "\n";
   cout << "equivalent unitary vs equivalent key: " << numcorrect << " / " << numcollision << "\n";
   cout << "----------------------------------------\n" << flush;
