@@ -20,6 +20,10 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 Author: Matthew Amy
 ---------------------------------------------------------------------*/
 
+// The things that are left out are performance improvements
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wreturn-type"
+
 #include "ring.h"
 #include <assert.h>
 
@@ -168,3 +172,4 @@ void test_ring() {
   assert(b == Elt(1, 1, 1, 1, 2));
 }
 
+#pragma GCC diagnostic pop
