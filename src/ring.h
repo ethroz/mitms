@@ -1,4 +1,3 @@
-
 /*--------------------------------------------------------------------
 MITMS - Meet-in-the-middle quantum circuit synthesis
 Copyright (C) 2013  Matthew Amy and The University of Waterloo,
@@ -22,6 +21,10 @@ Author: Matthew Amy
 
 #ifndef RING
 #define RING
+
+// The things that are left out are performance improvements
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wreturn-type"
 
 #include "configs.h"
 #include <complex>
@@ -137,5 +140,7 @@ struct elt_eq {
 void init_ring();
 
 void test_ring();
+
+#pragma GCC diagnostic pop
 
 #endif
