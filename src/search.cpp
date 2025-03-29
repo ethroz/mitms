@@ -93,15 +93,14 @@ struct WorkerArg {
   bool left_multiply;                 // parameter used in canonicalization and check_it calls
   map_t* current_map;                 // current search map (e.g. mp[i] in original code)
   ord_circuit_list* res_list;         // shared result list
-  std::atomic<int>* tasks_completed;  // shared progress counter
-  int pe;                             // number of permutations to try
-  int in;                             // increment for k values
+  std::atomic<size_t>* entries_processed;  // shared progress counter for map entries
 };
 
 // Worker thread function that processes its section of the map
 void* worker_section(void* arg) {
   WorkerArg* warg = (WorkerArg*)arg;
-  int tasks_processed = 0;
+  int pe = config::mod_perms ? num_perms : 1;
+  int in = config::mod_invs ? 1 : 2;
   
   // Get iterator to start position
   auto it = warg->mp->begin();
@@ -114,7 +113,7 @@ void* worker_section(void* arg) {
     candidate.to_Rmatrix(candidateMatrix);
     
     // Try each permutation/inverse combination
-    for (int k = 0; k < 2 * warg->pe; k += warg->in) {
+    for (int k = 0; k < 2 * pe; k += in) {
       Rmatrix V(dim, dim), W(dim_proj, dim);
       // Depending on parity of k, perform the appropriate permutation
       if (k % 2 == 0) {
@@ -163,11 +162,11 @@ void* worker_section(void* arg) {
       canon_form->clear();
       delete canon_form;
     }
-    tasks_processed += (2 * warg->pe) / warg->in;
+    
+    // Update progress after processing each map entry
+    (*warg->entries_processed)++;
   }
   
-  // Update the progress counter with total tasks processed
-  warg->tasks_completed->fetch_add(tasks_processed);
   pthread_exit(NULL);
 }
 
@@ -204,7 +203,7 @@ void exact_search(Rmatrix & U) {
       cout << "|";
 
       int total_map_entries = mp[j].size();
-      std::atomic<int> tasks_completed(0);
+      std::atomic<size_t> entries_processed(0);
       int num_threads = config::num_threads;
       if (total_map_entries < num_threads)
         num_threads = total_map_entries;
@@ -228,17 +227,13 @@ void exact_search(Rmatrix & U) {
         args[t].left_multiply = false;
         args[t].current_map = current_map;
         args[t].res_list = res_list;
-        args[t].tasks_completed = &tasks_completed;
-        args[t].pe = pe;
-        args[t].in = in;
+        args[t].entries_processed = &entries_processed;
         pthread_create(&threads[t], NULL, worker_section, &args[t]);
       }
 
       // Log progress while the workers are busy
-      int total_tasks = total_map_entries * ((2 * pe) / in);
-      while (tasks_completed.load() < total_tasks) {
-        int completed = tasks_completed.load();
-        int progress = (completed * 37) / total_tasks;
+      while (entries_processed < total_map_entries) {
+        int progress = (entries_processed * 37) / total_map_entries;
         cout << "\r|";
         for (int p = 0; p < progress; p++) {
           cout << "=";
