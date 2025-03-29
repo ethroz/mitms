@@ -13,7 +13,7 @@ if not args.command:
     exit(1)
 
 # Start timing
-start_time = time.time()
+start_time = time.perf_counter()
 
 # Execute the command
 try:
@@ -23,7 +23,7 @@ except Exception as e:
     exit(1)
 
 # End timing
-end_time = time.time()
+end_time = time.perf_counter()
 
 # Calculate elapsed time
 elapsed_time = end_time - start_time
