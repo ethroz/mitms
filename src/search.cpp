@@ -84,13 +84,6 @@ bool check_it(const Circuit & x, const Circuit & y, const Rmatrix & target) {
 
 }
 
-// Define a Task corresponding to one candidate circuit at a given k value.
-struct Task {
-  Circuit candidate;         // copy of the candidate circuit
-  Rmatrix candidateMatrix;   // candidate.to_Rmatrix result (dim x dim)
-  int k;
-};
-
 // Structure for passing search parameters to a worker thread.
 struct WorkerArg {
   const map_t* mp;                    // pointer to the map to search through
