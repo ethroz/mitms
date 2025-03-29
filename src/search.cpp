@@ -24,6 +24,11 @@ Author: Matthew Amy
 #include <iomanip>
 #include <pthread.h>
 #include "vptree.h"
+#include <vector>
+#include <atomic>
+#include <unistd.h>
+#include <thread>
+#include <chrono>
 
 /* There is an insane amount of code repetition here. Don't judge me */
 
@@ -46,7 +51,7 @@ pthread_cond_t data_ready;
 pthread_cond_t thrd_ready;
 pthread_mutex_t data_lock;
 pthread_mutex_t prnt_lock;
-pthread_mutex_t map_lock;
+pthread_mutex_t result_mutex;
 
 map_t            * data_map = NULL;
 ord_circuit_list * data_res = NULL;
@@ -79,7 +84,210 @@ bool check_it(const Circuit & x, const Circuit & y, const Rmatrix & target) {
 
 }
 
-void * worker_thrd(void * arg) {
+// Define a Task corresponding to one candidate circuit at a given k value.
+struct Task {
+  Circuit candidate;         // copy of the candidate circuit
+  Rmatrix candidateMatrix;   // candidate.to_Rmatrix result (dim x dim)
+  int k;
+};
+
+// Structure for passing a slice of tasks and shared pointers to a worker thread.
+struct WorkerArg {
+  const std::vector<Task>* tasks_ptr;  // pointer to the full tasks vector
+  size_t start_index;                  // starting index (inclusive) in tasks vector
+  size_t end_index;                    // ending index (exclusive)
+  const Rmatrix* U;                    // pointer to U (the target matrix), constant for search
+  bool left_multiply;                  // parameter used in canonicalization and check_it calls
+  map_t* mp;                           // current search map (e.g. mp[i] in original code)
+  ord_circuit_list* res_list;          // shared result list; already allocated
+  std::atomic<int>* tasks_completed;   // shared progress counter
+};
+
+// New worker thread function that processes its section (slice) of tasks.
+void* worker_section(void* arg) {
+  WorkerArg* warg = (WorkerArg*)arg;
+  // Iterate over the assigned tasks
+  for (size_t idx = warg->start_index; idx < warg->end_index; idx++) {
+    const Task& task = (*(warg->tasks_ptr))[idx];
+    Rmatrix V(dim, dim), W(dim_proj, dim);
+    // Depending on parity of k, perform the appropriate permutation
+    if (task.k % 2 == 0) {
+      task.candidateMatrix.permute_adj(V, task.k/2);
+    } else {
+      task.candidateMatrix.permute(V, task.k/2);
+    }
+    // Use the (possibly reduced) matrix for canonicalization
+    Canon* canon_form;
+    if (dim != dim_proj) {
+      V.submatrix(0, 0, dim_proj, dim, W);
+      canon_form = warg->left_multiply
+                   ? canonicalize(W * (*(warg->U)), false, false, false)
+                   : canonicalize((*(warg->U)) * W, false, false, false);
+    } else {
+      canon_form = warg->left_multiply
+                   ? canonicalize(V * (*(warg->U)))
+                   : canonicalize((*(warg->U)) * V);
+    }
+    auto trip = &(canon_form->front());
+    Circuit ans = find_unitary(trip->key, trip->mat, *(warg->mp)).second;
+    if (!ans.empty()) {
+      // Generate modified candidate circuits based on k
+      Circuit tmp_circ = (task.k == 0)
+                         ? task.candidate
+                         : task.candidate.transform(task.k/2, task.k % 2 == 1);
+      Circuit tmp_circ2 = ans.transform(-(trip->permutation), trip->adjoint);
+      if (warg->left_multiply
+           ? check_it(tmp_circ, tmp_circ2, *(warg->U))
+           : check_it(tmp_circ2, tmp_circ, *(warg->U))) {
+        Circuit tmp_circ3 = warg->left_multiply
+                            ? tmp_circ.append(tmp_circ2)
+                            : tmp_circ2.append(tmp_circ);
+        int cst = tmp_circ3.cost();
+        // Lock and insert into shared results.
+        pthread_mutex_lock(&result_mutex);
+        warg->res_list->insert(ord_circuit_pair(cst, tmp_circ3));
+        pthread_mutex_unlock(&result_mutex);
+      }
+      if (task.k != 0)
+        delete_circuit(tmp_circ);
+      delete_circuit(tmp_circ2);
+    }
+    canon_form->clear();
+    delete canon_form;
+    // Atomically update the progress counter.
+    warg->tasks_completed->fetch_add(1);
+  }
+  pthread_exit(NULL);
+}
+
+// Reworked exact_search function.
+void exact_search(Rmatrix & U) {
+  int pe = config::mod_perms ? num_perms : 1;
+  int in = config::mod_invs  ? 1 : 2;
+  map_t* circ_table = new map_t[config::max_seq];
+  map_t* left_table = (config::ancilla == 0) ? NULL : new map_t[config::max_seq];
+  map_t* mp = (config::ancilla == 0) ? circ_table : left_table;
+  circuit_list* base_list;
+  ord_circuit_list* res_list = data_res = new ord_circuit_list;
+  struct timespec start, end;
+  data_mat = Rmatrix(dim, dim);
+
+  // Generate base circuits.
+  base_list = generate_base_circuits();
+
+  // Initialize the circuit table for sequence 0.
+  load_sequences(0, base_list, circ_table, NULL);
+
+  // For each sequence length i.
+  for (int i = 1; i < config::max_seq; i++) {
+    if (config::ancilla == 0) {
+      load_sequences(i, base_list, circ_table, NULL);
+    } else {
+      load_sequences(i, base_list, left_table, circ_table);
+    }
+    // Set the current search map (data_map in the old code).
+    map_t* current_map = mp + i;
+
+    for (int j = max(i-1, 1); j <= i; j++) {
+      cout << "Looking for circuits with depth " << 2*i - (i - j) << "...\n";
+      cout << "|";
+
+      // Build the full list of tasks from the candidate circuits from mp[j].
+      std::vector<Task> tasks;
+      for (auto it = mp[j].begin(); it != mp[j].end(); ++it) {
+        Circuit candidate = it->second;
+        Rmatrix candidateMatrix(dim, dim);
+        candidate.to_Rmatrix(candidateMatrix);
+        for (int k = 0; k < 2 * pe; k += in) {
+          Task task;
+          task.candidate = candidate;
+          task.candidateMatrix = candidateMatrix;
+          task.k = k;
+          tasks.push_back(task);
+        }
+      }
+
+      int total_tasks = tasks.size();
+      // Use an atomic counter to track tasks completed.
+      std::atomic<int> tasks_completed(0);
+      int num_threads = config::num_threads;
+      if (total_tasks < num_threads)
+        num_threads = total_tasks;
+      if (num_threads <= 0)
+        num_threads = 1;
+
+      std::vector<pthread_t> threads(num_threads);
+      std::vector<WorkerArg> args(num_threads);
+      pthread_mutex_init(&result_mutex, NULL);
+
+      // Partition the tasks evenly among the worker threads.
+      int tasks_per_thread = (total_tasks + num_threads - 1) / num_threads;
+      clock_gettime(CLOCK_MONOTONIC, &start);
+      for (int t = 0; t < num_threads; t++) {
+        int start_index = t * tasks_per_thread;
+        int end_index = std::min(start_index + tasks_per_thread, total_tasks);
+        args[t].tasks_ptr = &tasks;
+        args[t].start_index = start_index;
+        args[t].end_index = end_index;
+        args[t].U = &U;
+        args[t].left_multiply = false;
+        args[t].mp = current_map;
+        args[t].res_list = res_list;
+        args[t].tasks_completed = &tasks_completed;
+        pthread_create(&threads[t], NULL, worker_section, &args[t]);
+      }
+
+      // Log progress while the workers are busy.
+      while (tasks_completed.load() < total_tasks) {
+        int completed = tasks_completed.load();
+        int progress = (completed * 37) / total_tasks;
+        cout << "\r|";
+        for (int p = 0; p < progress; p++) {
+          cout << "=";
+        }
+        cout << flush;
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+      }
+      cout << "|\n";
+      clock_gettime(CLOCK_MONOTONIC, &end);
+      double elapsed = (end.tv_sec + (double)end.tv_nsec / 1e9) -
+                       (start.tv_sec + (double)start.tv_nsec / 1e9);
+      cout << fixed << setprecision(3);
+      cout << "Time: " << elapsed << " s\n";
+
+      // Join all worker threads.
+      for (int t = 0; t < num_threads; t++) {
+        pthread_join(threads[t], NULL);
+      }
+
+      // Print any results found.
+      if (!res_list->empty()) {
+        for (auto ti = res_list->begin(); ti != res_list->end(); ++ti) {
+          (ti->second).print();
+          cout << "Cost " << ti->first << "\n\n" << flush;
+          delete_circuit(ti->second);
+        }
+        res_list->clear();
+        if (config::early_stop) {
+          pthread_mutex_destroy(&result_mutex);
+          delete [] circ_table;
+          if (left_table != NULL)
+            delete [] left_table;
+          delete base_list;
+          return;
+        }
+      }
+      cout << "----------------------------------------\n" << flush;
+      pthread_mutex_destroy(&result_mutex);
+    }
+  }
+  delete [] circ_table;
+  if (left_table != NULL)
+    delete [] left_table;
+  delete base_list;
+}
+
+void * worker_thrd_tdepth(void * arg) {
   Circuit circ, tmp_circ, tmp_circ2, tmp_circ3, ans;
   int k, i, j, cst;
   bool left_multiply;
@@ -152,118 +360,6 @@ void * worker_thrd(void * arg) {
   pthread_exit(NULL);
 }
 
-void exact_search(Rmatrix & U) {
-  int num = 0, p = 0;
-  int i, j, k;
-  int pe = config::mod_perms ? num_perms : 1;
-  int in = config::mod_invs  ?         1 : 2;
-  map_t * circ_table = new map_t[config::max_seq];
-  map_t * left_table = (config::ancilla == 0) ? NULL : new map_t[config::max_seq];
-  map_t * mp         = (config::ancilla == 0) ? circ_table : left_table;
-  map_iter it;
-  circuit_list * base_list;
-  ord_circuit_list * res_list = data_res = new ord_circuit_list;
-  ord_circuit_iter ti;
-  struct timespec start, end;
-	data_mat = Rmatrix(dim, dim);
-
-  // Do this first so that the threads don't conflict
-  base_list = generate_base_circuits();
-
-  //Initialize the circuit tables
-  //Threading stuff
-  pthread_mutex_init(&data_lock, NULL);
-  pthread_mutex_init(&prnt_lock, NULL);
-  pthread_cond_init(&data_ready, NULL);
-  pthread_cond_init(&thrd_ready, NULL);
-
-  pthread_t * thrds = new pthread_t[config::num_threads];
-  for (i = 0; i < config::num_threads; i++) {
-    pthread_create(thrds + i, NULL, &(worker_thrd), (void *)(&U));
-  }
-  //---------------------
-
-  load_sequences(0, base_list, circ_table, NULL);
-  pthread_mutex_lock(&data_lock);
-  for (i = 1; i < config::max_seq; i++) {
-		if (config::ancilla == 0) {
-    	load_sequences(i, base_list, circ_table, NULL);
-		} else {
-			load_sequences(i, base_list, left_table, circ_table);
-		}
-
-    // Meet in the middle - Sequences of length 2i + {0, 1}
-    data_map = mp + i;
-    for (j = max(i-1, 1); j <= i; j++) {
-    	cout << "Looking for circuits with depth " << 2*i - (i - j) << "...\n";
-			cout << "|";
-			num = 0;
-			p = 0;
-    	clock_gettime(CLOCK_MONOTONIC, &start);
-
-			// Look for circuits
-			for (it = mp[j].begin(); it != mp[j].end(); it++) {
-				data_circ = it->second;
-				(it->second).to_Rmatrix(data_mat);
-				for (k = 0; k < 2*pe; k += in) {
-					// Write data
-					data_k = k;
-					data_avail = true;
-					// Signal workers that data is ready
-					pthread_cond_signal(&data_ready);
-					pthread_cond_wait(&thrd_ready, &data_lock);
-				}
-				num++;
-        int xxx = num*37 / (mp[j].size());
-				if (xxx >= p) {
-          for (int yyy = p; yyy <= ceil(xxx); yyy++) {
-					  cout << "=" << flush;
-					  p++;
-          }
-				}
-			}
-			cout << "|\n";
-
-			// Wait for all threads to finish 
-			while (data_num > 0) {
-				pthread_mutex_unlock(&data_lock);
-				pthread_mutex_lock(&data_lock);
-			}
-      
-			clock_gettime(CLOCK_MONOTONIC, &end);
-			cout << fixed << setprecision(3);
-			cout << "Time: " << (end.tv_sec + (double)end.tv_nsec/1000000000) - (start.tv_sec + (double)start.tv_nsec/1000000000) << " s\n";
-      
-			// Check if we found a result and stop if early_stop is enabled
-			if (!res_list->empty()) {
-				// Print the results before stopping
-				for (ti = res_list->begin(); ti != res_list->end(); ++ti) {
-					(ti->second).print();
-					cout << "Cost " << ti->first << "\n\n" << flush;
-					delete_circuit(ti->second);
-				}
-			  res_list->clear();
-
-        if (config::early_stop) {
-          // Clean up before returning
-          delete [] circ_table;
-          if (left_table != NULL) delete [] left_table;
-          delete base_list;
-          delete [] thrds;
-          return;
-        }
-			}
-      
-			cout << "----------------------------------------\n" << flush;
-    }
-  }
-
-  delete [] circ_table;
-  if (left_table != NULL) delete [] left_table;
-  delete base_list;
-  delete [] thrds;
-}
-
 void exact_search_tdepth(Rmatrix & U) {
   int i, j, k, ind;
   int pe = config::mod_perms ? num_perms : 1;
@@ -292,7 +388,7 @@ void exact_search_tdepth(Rmatrix & U) {
 
   pthread_t * thrds = new pthread_t[config::num_threads];
   for (i = 0; i < config::num_threads; i++) {
-    pthread_create(thrds + i, NULL, &(worker_thrd), (void *)(&U));
+    pthread_create(thrds + i, NULL, &(worker_thrd_tdepth), (void *)(&U));
   }
   //---------------------
 
