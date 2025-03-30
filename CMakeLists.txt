@@ -10,8 +10,7 @@ find_package(LAPACK REQUIRED)
 
 # Add include directories
 include_directories(
-    /usr/local/include/lapackpp/
-    /usr/include/lapackpp/
+    /usr/local/include/lapackpp
     ${CMAKE_SOURCE_DIR}/src
 )
 
