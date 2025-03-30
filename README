@@ -45,10 +45,10 @@ folows:
   ./build/mitms_parallel -no-serialize -no-equiv-checks -threads <num-threads> -early-stop <circuit-label>
 
 Alternatively, to compare the two programs, run the python script:
-  python3 ./compare_programs.py <circuit-label> --threads=<num-threads> --times=<num-times>
+  python3 ./compare_runtime.py <circuit-label> --threads=<num-threads> --times=<num-times>
 
 Example:
-  python3 ./compare_programs.py W --threads=6 --times=5  
+  python3 ./compare_runtime.py W --threads=6 --times=5  
 
 -------------------------------
 
