@@ -6,61 +6,52 @@ Written by Matthew Amy
 We kindly request that anyone using this code to synthesize circuits
 acknowledges the tool and/or the paper on which it is based in their work
 
-BUILD
+Modified by ethroz
+
+SETUP
 ------------------------------
 
-To build mitms, run make in the top level folder.
-
-mitms requires the following libraries to be installed:
-
+Before building the mitms code, one must first install:
 -- Lapack
 -- Blas
 -- Lapack++
 
-Lapack and Blas (I forget whether they're separate) can be a massive pain
-to compile, so if you can get them through your package manager, that is
-much preferred.
+Alternatively, there is a script which will install and setup everything:
+  ./setup.sh
 
-Lapack++ can be found on sourceforge by searching either lapack++ or lapackpp.
-Compiling it shouldn't be too difficult, but if you install it outside of
-/usr or /usr/local you may have to modify the makefile
+BUILD
+------------------------------
 
-Additionally, if your compiler doesn't support the c++0x/c++11 standard,
-you'll need to change HAS_HASH in configs.h to "false" and remove the std=c++0x
-flag from the Makefile.
-
+This project must be built with cmake. To do so, run these commands from the
+root of the repository:
+  cmake -S . -B build
+  cmake --build build --config Release
 
 USAGE
 ------------------------------
-Run mitms with
-  mitms [options] <circuit-label>
 
-The options are documented in mitms -help. Not all of them will work with one
-another, and certain combinations may break the program. Most of the options
-are experiments and shouldn't be of much concern to most users anyways.
+Run the original mitms program with:
+  ./build/mitms_original [options] <circuit-label>
 
-The standard use case is to exactly synthesize a unitary over the ring 
-Z[1/sqrt(2), i], which due to recent results admits a factorization over
-Clifford group gates and the T-gate. To synthesize such a unitary, you must
-first have a circuit over Clifford group and T gates with arbitrarily many
-controls -- this circuit must be added to the file "searches" with the
-following syntax:
-  
-  <circuit-label> <number of qubits>
-  <circuit>
+And run the new and improved mitms program with:
+  ./build/mitms_parallel [options] <circuit-label>
 
-The circuit format should be easy to figure out by looking at the other
-circuits, but basically you write which gate is being applied at each stage
-(I, H, T, S, X, Y, Z and S*, T* for their inverses, or C(i) for a control on
-the gate performed on qubit #i). Also, the last stage must have no spaces after
-any of the gates.
+The options are documented in the -help menu. Not all of them will work with
+one another, and certain combinations may break the program. Most of the
+options are experiments and shouldn't be of much concern to most users anyways.
 
-When mitms is run with <circuit-label>, it will find the circuit in "searches",
-compute the unitary representation over Z[1/sqrt(2), i], then perform the
-search. Circuits implementing the unitary over Clifford + T are returned in
-order of increasing depth.
+The recommended way to see the difference between the two programs is as
+folows:
+  ./build/mitms_parallel -no-serialize -no-equiv-checks -threads <num-threads> -early-stop <circuit-label>
+
+Alternatively, to compare the two programs, run the python script:
+  python3 ./compare_programs.py <circuit-label> --threads=<num-threads> --times=<num-times>
+
+Example:
+  python3 ./compare_programs.py W --threads=6 --times=5  
 
 -------------------------------
+
 Another possibility is to use this tool to approximate unitaries. The idea is
 documented in the author's Master's thesis "Algorithms for the Optimization
 of Quantum Circuits." It uses a vantage-point tree to perform nearest neighbour
