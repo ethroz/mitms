@@ -22,10 +22,6 @@ Author: Matthew Amy
 #ifndef RING
 #define RING
 
-// The things that are left out are performance improvements
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wreturn-type"
-
 #include "configs.h"
 #include <complex>
 #include <iostream>
@@ -55,7 +51,7 @@ class Elt {
     /* Arithmetic operations -- inlining gave worse performance somehow */
     void reduce();
     inline Elt & operator=  (const Elt & R) {
-      a = R.a; b = R.b; c = R.c; d = R.d; n = R.n;
+      a = R.a; b = R.b; c = R.c; d = R.d; n = R.n; return *this;
     }
     Elt & operator+= (const Elt & R);
     Elt & operator-= (const Elt & R);
@@ -140,7 +136,5 @@ struct elt_eq {
 void init_ring();
 
 void test_ring();
-
-#pragma GCC diagnostic pop
 
 #endif

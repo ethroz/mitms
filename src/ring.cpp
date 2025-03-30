@@ -20,10 +20,6 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 Author: Matthew Amy
 ---------------------------------------------------------------------*/
 
-// The things that are left out are performance improvements
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wreturn-type"
-
 #include "ring.h"
 #include <assert.h>
 
@@ -72,6 +68,7 @@ Elt & Elt::operator+= (const Elt & R) {
   b = x*b + R.b*y;
   c = x*c + R.c*y;
   d = x*d + R.d*y;
+  return *this;
 }
 Elt & Elt::operator-= (const Elt & R) {
   int x = 1 << R.n;
@@ -81,6 +78,7 @@ Elt & Elt::operator-= (const Elt & R) {
   b = x*b - y*R.b;
   c = x*c - y*R.c;
   d = x*d - y*R.d;
+  return *this;
 }
 Elt & Elt::operator*= (const Elt & R) {
   if (config::hash_ring) {
@@ -105,6 +103,7 @@ Elt & Elt::operator*= (const Elt & R) {
     d = ax*R.d + bx*R.c + cx*R.b + dx*R.a;
     n += R.n;
   }
+  return *this;
 }
 
 void Elt::print() const {
@@ -171,5 +170,3 @@ void test_ring() {
   c = a - b;
   assert(b == Elt(1, 1, 1, 1, 2));
 }
-
-#pragma GCC diagnostic pop
