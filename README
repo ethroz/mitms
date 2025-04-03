@@ -33,6 +33,9 @@ root of the repository:
 USAGE
 ------------------------------
 
+Make sure to run the program from the root of the repo so the programs find the
+circuit/gate definitions in the "searches" file.
+
 Run the original mitms program with:
   ./build/mitms_original [options] <circuit-label>
 
