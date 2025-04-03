@@ -11,6 +11,9 @@ Modified by ethroz
 SETUP
 ------------------------------
 
+The mitms code has only been tested to run on Linux-based machines. Windows and
+Mac are not supported although they may work.
+
 Before building the mitms code, one must first install:
 -- Lapack
 -- Blas
